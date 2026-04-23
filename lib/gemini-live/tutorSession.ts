@@ -1,7 +1,10 @@
 import {
+  asRecord,
   extractApiErrorText,
   extractModelAudioBase64Chunks,
+  isModelTextOnlyTurn,
   isSetupCompleteMessage,
+  pick,
 } from "./liveMessageParse";
 import {
   float32ToPcm16LE,
@@ -16,7 +19,10 @@ const DEFAULT_MODEL = "gemini-3.1-flash-live-preview";
 export const TUTOR_SYSTEM_INSTRUCTION = `너는 9살 아이의 눈높이에 맞춰 상식, 자연, 우주를 설명해 주는 친절한 튜터야. 어려운 단어는 즉시 풀이해 주고, 아이가 딴소리를 하면 부드럽게 원래 주제로 데려와 줘. 한 세션은 약 15분 정도를 목표로 해. 그동안 흥미롭고 안전하며 격려하는 톤으로, 짧고 선명한 문장으로 말하며, 아이가 끼어들기 쉬운 리듬을 유지해 줘.
 
 [최우선 안전 규칙 — 반드시 지킬 것]
-너는 9살 아이를 위한 안전한 튜터다. 성인용, 폭력, 비속어, 정치, 또는 아이에게 부적절한 대화는 절대 하지 마. 아이가 그런 주제를 꺼내면 단호하지만 다정하게 "그건 튜터랑 이야기할 수 없는 주제야. 우리 아까 하던 우주 이야기 마저 할까?"라고 말한 뒤, 반드시 그 주제로 대화를 전환해.`;
+너는 9살 아이를 위한 안전한 튜터다. 성인용, 폭력, 비속어, 정치, 또는 아이에게 부적절한 대화는 절대 하지 마. 아이가 그런 주제를 꺼내면 단호하지만 다정하게 "그건 튜터랑 이야기할 수 없는 주제야. 우리 아까 하던 우주 이야기 마저 할까?"라고 말한 뒤, 반드시 그 주제로 대화를 전환해.
+
+[거절·차단 직후 — 절대 침묵 금지]
+부적절한 내용을 거절하거나 안전상 응답을 줄였을 때는 **그 자리에서 곧바로** 허용된 주제(우주·자연·상식) 중 하나를 골라 **반드시 음성으로** 다음 한마디를 이어가. 텍스트만 남기고 끝내거나, 아이가 다시 말할 때까지 기다리며 대화를 끊지 마. 한 번 거절했다고 세션을 종료하지 마.`;
 
 const WS_PATH =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
@@ -82,6 +88,11 @@ export class TutorLiveSession {
   public lastError: string | null = null;
   /** True after `setupComplete` and input worklet are running. */
   private realtimeStarted = false;
+  private lastModelAudioAt = 0;
+  private textOnlyResumeTimer: number | null = null;
+  private interruptedResumeTimer: number | null = null;
+  private resumeHintsSent = 0;
+  private static readonly MAX_RESUME_HINTS = 8;
 
   constructor(
     options: { apiKey: string; model?: string; onLog?: MessageHandler } = {
@@ -136,16 +147,91 @@ export class TutorLiveSession {
     }
   }
 
+  private clearResumeTimers(): void {
+    if (this.textOnlyResumeTimer !== null) {
+      window.clearTimeout(this.textOnlyResumeTimer);
+      this.textOnlyResumeTimer = null;
+    }
+    if (this.interruptedResumeTimer !== null) {
+      window.clearTimeout(this.interruptedResumeTimer);
+      this.interruptedResumeTimer = null;
+    }
+  }
+
+  private sendResumeConversationHint(): void {
+    if (this.resumeHintsSent >= TutorLiveSession.MAX_RESUME_HINTS) {
+      return;
+    }
+    if (this.ws?.readyState !== WebSocket.OPEN || !this.realtimeStarted) {
+      return;
+    }
+    this.resumeHintsSent += 1;
+    this.ws.send(
+      JSON.stringify({
+        realtimeInput: {
+          text:
+            "[대화 계속] 아이는 아직 옆에 있어. 방금은 안전 때문에 말을 줄였을 수 있어. **지금 바로 음성으로** 한 문장만 말하고, 우주·자연·상식 중 아이가 좋아할 만한 주제로 자연스럽게 이어가. 여기서 멈추거나 끝내지 마.",
+        },
+      })
+    );
+    this.onLog("resume hint sent after stall/text-only");
+  }
+
+  private scheduleResumeIfTextOnlyOrStalled(obj: Record<string, unknown>): void {
+    if (isModelTextOnlyTurn(obj)) {
+      this.clearResumeTimers();
+      this.textOnlyResumeTimer = window.setTimeout(() => {
+        this.textOnlyResumeTimer = null;
+        this.sendResumeConversationHint();
+      }, 500);
+      return;
+    }
+
+    const sc = asRecord(pick(obj, "serverContent", "server_content"));
+    if (sc?.interrupted === true) {
+      this.clearResumeTimers();
+      this.interruptedResumeTimer = window.setTimeout(() => {
+        this.interruptedResumeTimer = null;
+        if (Date.now() - this.lastModelAudioAt > 700) {
+          this.sendResumeConversationHint();
+        }
+      }, 1200);
+    }
+  }
+
   private handleServerPayload(obj: Record<string, unknown>): void {
+    const pf = asRecord(pick(obj, "promptFeedback", "prompt_feedback"));
+    if (
+      pf &&
+      (typeof pf.blockReason === "string" ||
+        typeof pf.block_reason === "string")
+    ) {
+      this.clearResumeTimers();
+      this.textOnlyResumeTimer = window.setTimeout(() => {
+        this.textOnlyResumeTimer = null;
+        this.sendResumeConversationHint();
+      }, 450);
+    }
+
     const chunks = extractModelAudioBase64Chunks(obj);
     if (chunks.length === 1 && chunks[0] === "__INTERRUPTED__") {
       this.onLog("interrupted: clearing playback");
       this.player?.clear();
+      this.scheduleResumeIfTextOnlyOrStalled(obj);
       return;
     }
+
+    let playedAudio = false;
     for (const b64 of chunks) {
       this.player?.playBase64Pcm16(b64);
+      playedAudio = true;
     }
+    if (playedAudio) {
+      this.lastModelAudioAt = Date.now();
+      this.clearResumeTimers();
+    }
+
+    this.scheduleResumeIfTextOnlyOrStalled(obj);
   }
 
   private sendPcm16Chunk(pcm: Int16Array): void {
@@ -217,6 +303,9 @@ export class TutorLiveSession {
     this.setStatus("connecting", null);
     this.lastError = null;
     this.realtimeStarted = false;
+    this.lastModelAudioAt = Date.now();
+    this.resumeHintsSent = 0;
+    this.clearResumeTimers();
     this.player = new Pcm24kPlayer();
 
     try {
@@ -372,6 +461,7 @@ export class TutorLiveSession {
   }
 
   stop(): void {
+    this.clearResumeTimers();
     this.realtimeStarted = false;
     if (this.workletNode) {
       this.workletNode.port.onmessage = null;

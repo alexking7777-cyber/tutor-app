@@ -73,3 +73,36 @@ export function extractApiErrorText(obj: Record<string, unknown>): string | null
   }
   return JSON.stringify(err);
 }
+
+/** 모델 턴에 텍스트 파트는 있는데 인라인 오디오는 없는지 (거절·차단 후 텍스트만 올 때). */
+export function isModelTextOnlyTurn(obj: Record<string, unknown>): boolean {
+  const serverContent = asRecord(
+    pick(obj, "serverContent", "server_content")
+  );
+  if (!serverContent) {
+    return false;
+  }
+  const modelTurn = asRecord(
+    pick(serverContent, "modelTurn", "model_turn")
+  );
+  const parts = modelTurn?.parts;
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return false;
+  }
+  let hasText = false;
+  let hasAudio = false;
+  for (const part of parts) {
+    const pr = asRecord(part);
+    if (!pr) {
+      continue;
+    }
+    const inl = asRecord(pick(pr, "inlineData", "inline_data"));
+    if (typeof inl?.data === "string" && inl.data.length > 0) {
+      hasAudio = true;
+    }
+    if (typeof pr.text === "string" && pr.text.trim().length > 0) {
+      hasText = true;
+    }
+  }
+  return hasText && !hasAudio;
+}

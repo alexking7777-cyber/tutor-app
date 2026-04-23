@@ -1,12 +1,12 @@
 "use client";
 
-import { TutorBear } from "@/components/TutorBear";
+import { TutorMinionRobin } from "@/components/TutorMinionRobin";
 import { TutorLiveSession } from "@/lib/gemini-live/tutorSession";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const INITIAL_TIME = 15 * 60;
 const TIMER_TICK_MS = 250;
-const LIP_DECAY = 0.28;
+const LIP_DECAY = 0.58;
 
 function formatTime(totalSeconds: number) {
   const safe = Math.max(0, Math.floor(totalSeconds));
@@ -37,7 +37,7 @@ export default function Home() {
   const timeUpFinalizingRef = useRef(false);
 
   const mouthRef = useRef<HTMLDivElement | null>(null);
-  const bearBodyRef = useRef<HTMLDivElement | null>(null);
+  const mascotBodyRef = useRef<HTMLDivElement | null>(null);
   const lipSmoothRef = useRef(1);
 
   const endLiveSession = useCallback(() => {
@@ -108,10 +108,10 @@ export default function Home() {
     if (!live) {
       lipSmoothRef.current = 1;
       if (mouthRef.current) {
-        mouthRef.current.style.transform = "scaleY(0.55)";
+        mouthRef.current.style.transform = "scaleY(0.5)";
       }
-      if (bearBodyRef.current) {
-        bearBodyRef.current.style.transform = "scale(1)";
+      if (mascotBodyRef.current) {
+        mascotBodyRef.current.style.transform = "scale(1)";
       }
       return;
     }
@@ -132,18 +132,18 @@ export default function Home() {
         sum += v * v;
       }
       const rms = Math.sqrt(sum / data.length);
-      const target = 1 + Math.min(0.55, rms * 12);
+      const target = 1 + Math.min(0.42, rms * 9);
       lipSmoothRef.current +=
         (target - lipSmoothRef.current) * (1 - LIP_DECAY);
       const s = lipSmoothRef.current;
       const mouthY = Math.min(
-        1.28,
-        Math.max(0.38, 0.48 + (s - 1) * 1.15 + rms * 6)
+        1.18,
+        Math.max(0.42, 0.5 + (s - 1) * 0.85 + rms * 4.5)
       );
       mouthRef.current.style.transform = `scaleY(${mouthY.toFixed(4)})`;
-      if (bearBodyRef.current) {
-        const bodyScale = 1 + Math.min(0.08, rms * 3.5);
-        bearBodyRef.current.style.transform = `scale(${bodyScale.toFixed(4)})`;
+      if (mascotBodyRef.current) {
+        const bodyScale = 1 + Math.min(0.035, rms * 2.2);
+        mascotBodyRef.current.style.transform = `scale(${bodyScale.toFixed(4)})`;
       }
       raf = requestAnimationFrame(tick);
     };
@@ -228,8 +228,8 @@ export default function Home() {
           </p>
         )}
 
-        <div ref={bearBodyRef} className="mt-6 transition-transform duration-100">
-          <TutorBear mouthRef={mouthRef} />
+        <div ref={mascotBodyRef} className="mt-6">
+          <TutorMinionRobin mouthRef={mouthRef} />
         </div>
 
         <section className="relative mt-4 flex flex-1 items-center justify-center pb-10">

@@ -18,7 +18,7 @@ export class Pcm24kPlayer {
       this.masterGain.gain.value = 1;
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 256;
-      this.analyser.smoothingTimeConstant = 0.35;
+      this.analyser.smoothingTimeConstant = 0.72;
       this.masterGain.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
     }
