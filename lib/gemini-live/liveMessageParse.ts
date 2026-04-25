@@ -2,6 +2,8 @@
  * Normalize Gemini Live WebSocket JSON (camelCase vs snake_case from protobuf JSON).
  */
 
+import type { TranscriptRole } from "./transcriptTypes";
+
 export function asRecord(v: unknown): Record<string, unknown> | null {
   if (v !== null && typeof v === "object" && !Array.isArray(v)) {
     return v as Record<string, unknown>;
@@ -105,4 +107,63 @@ export function isModelTextOnlyTurn(obj: Record<string, unknown>): boolean {
     }
   }
   return hasText && !hasAudio;
+}
+
+/** Live 서버 메시지 한 건에서 나온 전사/텍스트 조각(순서대로). */
+export type LiveTranscriptFragment = { role: TranscriptRole; text: string };
+
+/**
+ * `inputAudioTranscription` / `outputAudioTranscription` 활성화 시 오는 전사와,
+ * 텍스트-only 모델 턴의 `modelTurn.parts[].text`를 수집한다.
+ */
+export function extractLiveTranscriptFragments(
+  obj: Record<string, unknown>
+): LiveTranscriptFragment[] {
+  const out: LiveTranscriptFragment[] = [];
+  const push = (role: TranscriptRole, text: unknown) => {
+    if (typeof text !== "string") {
+      return;
+    }
+    const t = text.trim();
+    if (!t) {
+      return;
+    }
+    out.push({ role, text: t });
+  };
+
+  const sc = asRecord(pick(obj, "serverContent", "server_content"));
+  const candidates: (Record<string, unknown> | null)[] = [obj, sc];
+  for (const base of candidates) {
+    if (!base) {
+      continue;
+    }
+    const it = asRecord(pick(base, "inputTranscription", "input_transcription"));
+    push("user", it?.text);
+    const ot = asRecord(
+      pick(base, "outputTranscription", "output_transcription")
+    );
+    push("model", ot?.text);
+  }
+
+  if (sc) {
+    const ot = asRecord(
+      pick(sc, "outputTranscription", "output_transcription")
+    );
+    const hasOutputTx =
+      typeof ot?.text === "string" && ot.text.trim().length > 0;
+    if (!hasOutputTx) {
+      const modelTurn = asRecord(
+        pick(sc, "modelTurn", "model_turn")
+      );
+      const parts = modelTurn?.parts;
+      if (Array.isArray(parts)) {
+        for (const part of parts) {
+          const pr = asRecord(part);
+          push("model", pr?.text);
+        }
+      }
+    }
+  }
+
+  return out;
 }

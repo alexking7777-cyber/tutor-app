@@ -4,6 +4,8 @@ import type { RefObject } from "react";
 
 type Props = {
   mouthRef: RefObject<HTMLDivElement | null>;
+  /** Shown under the mascot (heritage-language tutor UI). */
+  caption: string;
   className?: string;
 };
 
@@ -11,7 +13,7 @@ type Props = {
  * 노란 캡슐형 튜터 "로빈" (미니언 느낌의 오리지널 캐릭터, CSS만).
  * 고글 + 작은 몸통, `mouthRef`로 립싱크 scaleY.
  */
-export function TutorMinionRobin({ mouthRef, className = "" }: Props) {
+export function TutorMinionRobin({ mouthRef, caption, className = "" }: Props) {
   return (
     <div
       className={`relative flex flex-col items-center justify-center ${className}`}
@@ -47,9 +49,7 @@ export function TutorMinionRobin({ mouthRef, className = "" }: Props) {
           <div className="pointer-events-none absolute -top-0.5 right-[18%] h-7 w-3 rounded-b-md bg-sky-700/95 shadow-sm" />
         </div>
       </div>
-      <p className="mt-2 text-center text-xs font-semibold text-yellow-900/75">
-        튜터 로빈
-      </p>
+      <p className="mt-2 text-center text-xs font-semibold text-yellow-900/75">{caption}</p>
     </div>
   );
 }
